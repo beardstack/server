@@ -48,6 +48,7 @@ use OCP\IRequest;
 use OCP\IURLGenerator;
 use OCP\Files\IRootFolder;
 use OCP\Lock\LockedException;
+use OCP\Share;
 use OCP\Share\IManager;
 use OCP\Share\Exceptions\ShareNotFound;
 use OCP\Share\Exceptions\GenericShareException;
@@ -182,15 +183,15 @@ class ShareAPIController extends OCSController {
 			$result['expiration'] = $expiration->format('Y-m-d 00:00:00');
 		}
 
-		if ($share->getShareType() === \OCP\Share::SHARE_TYPE_USER) {
+		if ($share->getShareType() === Share::SHARE_TYPE_USER) {
 			$sharedWith = $this->userManager->get($share->getSharedWith());
 			$result['share_with'] = $share->getSharedWith();
 			$result['share_with_displayname'] = $sharedWith !== null ? $sharedWith->getDisplayName() : $share->getSharedWith();
-		} else if ($share->getShareType() === \OCP\Share::SHARE_TYPE_GROUP) {
+		} else if ($share->getShareType() === Share::SHARE_TYPE_GROUP) {
 			$group = $this->groupManager->get($share->getSharedWith());
 			$result['share_with'] = $share->getSharedWith();
 			$result['share_with_displayname'] = $group !== null ? $group->getDisplayName() : $share->getSharedWith();
-		} else if ($share->getShareType() === \OCP\Share::SHARE_TYPE_LINK) {
+		} else if ($share->getShareType() === Share::SHARE_TYPE_LINK) {
 
 			$result['share_with'] = $share->getPassword();
 			$result['share_with_displayname'] = $share->getPassword();
@@ -198,16 +199,16 @@ class ShareAPIController extends OCSController {
 			$result['token'] = $share->getToken();
 			$result['url'] = $this->urlGenerator->linkToRouteAbsolute('files_sharing.sharecontroller.showShare', ['token' => $share->getToken()]);
 
-		} else if ($share->getShareType() === \OCP\Share::SHARE_TYPE_REMOTE) {
+		} else if ($share->getShareType() === Share::SHARE_TYPE_REMOTE || $share->getShareType() || Share::SHARE_TYPE_REMOTE_GROUP) {
 			$result['share_with'] = $share->getSharedWith();
 			$result['share_with_displayname'] = $this->getDisplayNameFromAddressBook($share->getSharedWith(), 'CLOUD');
 			$result['token'] = $share->getToken();
-		} else if ($share->getShareType() === \OCP\Share::SHARE_TYPE_EMAIL) {
+		} else if ($share->getShareType() === Share::SHARE_TYPE_EMAIL) {
 			$result['share_with'] = $share->getSharedWith();
 			$result['password'] = $share->getPassword();
 			$result['share_with_displayname'] = $this->getDisplayNameFromAddressBook($share->getSharedWith(), 'EMAIL');
 			$result['token'] = $share->getToken();
-		} else if ($share->getShareType() === \OCP\Share::SHARE_TYPE_CIRCLE) {
+		} else if ($share->getShareType() === Share::SHARE_TYPE_CIRCLE) {
 			// getSharedWith() returns either "name (type, owner)" or
 			// "name (type, owner) [id]", depending on the Circles app version.
 			$hasCircleId = (substr($share->getSharedWith(), -1) === ']');
@@ -302,7 +303,7 @@ class ShareAPIController extends OCSController {
 			throw new OCSNotFoundException($this->l->t('Could not delete share'));
 		}
 
-		if ($share->getShareType() === \OCP\Share::SHARE_TYPE_GROUP &&
+		if ($share->getShareType() === Share::SHARE_TYPE_GROUP &&
 			$share->getShareOwner() !== $this->currentUser &&
 			$share->getSharedBy() !== $this->currentUser) {
 			$this->shareManager->deleteFromSelf($share, $this->currentUser);
@@ -389,14 +390,14 @@ class ShareAPIController extends OCSController {
 			$permissions &= ~($permissions & ~$path->getPermissions());
 		}
 
-		if ($shareType === \OCP\Share::SHARE_TYPE_USER) {
+		if ($shareType === Share::SHARE_TYPE_USER) {
 			// Valid user is required to share
 			if ($shareWith === null || !$this->userManager->userExists($shareWith)) {
 				throw new OCSNotFoundException($this->l->t('Please specify a valid user'));
 			}
 			$share->setSharedWith($shareWith);
 			$share->setPermissions($permissions);
-		} else if ($shareType === \OCP\Share::SHARE_TYPE_GROUP) {
+		} else if ($shareType === Share::SHARE_TYPE_GROUP) {
 			if (!$this->shareManager->allowGroupSharing()) {
 				throw new OCSNotFoundException($this->l->t('Group sharing is disabled by the administrator'));
 			}
@@ -407,7 +408,7 @@ class ShareAPIController extends OCSController {
 			}
 			$share->setSharedWith($shareWith);
 			$share->setPermissions($permissions);
-		} else if ($shareType === \OCP\Share::SHARE_TYPE_LINK) {
+		} else if ($shareType === Share::SHARE_TYPE_LINK) {
 			//Can we even share links?
 			if (!$this->shareManager->shareApiAllowLinks()) {
 				throw new OCSNotFoundException($this->l->t('Public link sharing is disabled by the administrator'));
@@ -417,7 +418,7 @@ class ShareAPIController extends OCSController {
 			 * For now we only allow 1 link share.
 			 * Return the existing link share if this is a duplicate
 			 */
-			$existingShares = $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_LINK, $path, false, 1, 0);
+			$existingShares = $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_LINK, $path, false, 1, 0);
 			if (!empty($existingShares)) {
 				return new DataResponse($this->formatShare($existingShares[0]));
 			}
@@ -458,21 +459,28 @@ class ShareAPIController extends OCSController {
 				}
 			}
 
-		} else if ($shareType === \OCP\Share::SHARE_TYPE_REMOTE) {
+		} else if ($shareType === Share::SHARE_TYPE_REMOTE) {
 			if (!$this->shareManager->outgoingServer2ServerSharesAllowed()) {
 				throw new OCSForbiddenException($this->l->t('Sharing %s failed because the back end does not allow shares from type %s', [$path->getPath(), $shareType]));
 			}
 
 			$share->setSharedWith($shareWith);
 			$share->setPermissions($permissions);
-		} else if ($shareType === \OCP\Share::SHARE_TYPE_EMAIL) {
+		}  else if ($shareType === Share::SHARE_TYPE_REMOTE_GROUP) {
+			if (!$this->shareManager->outgoingServer2ServerGroupSharesAllowed()) {
+				throw new OCSForbiddenException($this->l->t('Sharing %s failed because the back end does not allow shares from type %s', [$path->getPath(), $shareType]));
+			}
+
+			$share->setSharedWith($shareWith);
+			$share->setPermissions($permissions);
+		} else if ($shareType === Share::SHARE_TYPE_EMAIL) {
 			if ($share->getNodeType() === 'file') {
 				$share->setPermissions(Constants::PERMISSION_READ);
 			} else {
 				$share->setPermissions($permissions);
 			}
 			$share->setSharedWith($shareWith);
-		} else if ($shareType === \OCP\Share::SHARE_TYPE_CIRCLE) {
+		} else if ($shareType === Share::SHARE_TYPE_CIRCLE) {
 			if (!\OC::$server->getAppManager()->isEnabledForUser('circles') || !class_exists('\OCA\Circles\ShareByCircleProvider')) {
 				throw new OCSNotFoundException($this->l->t('You cannot share to a Circle if the app is not enabled'));
 			}
@@ -513,9 +521,9 @@ class ShareAPIController extends OCSController {
 	 */
 	private function getSharedWithMe($node = null, bool $includeTags): DataResponse {
 
-		$userShares = $this->shareManager->getSharedWith($this->currentUser, \OCP\Share::SHARE_TYPE_USER, $node, -1, 0);
-		$groupShares = $this->shareManager->getSharedWith($this->currentUser, \OCP\Share::SHARE_TYPE_GROUP, $node, -1, 0);
-		$circleShares = $this->shareManager->getSharedWith($this->currentUser, \OCP\Share::SHARE_TYPE_CIRCLE, $node, -1, 0);
+		$userShares = $this->shareManager->getSharedWith($this->currentUser, Share::SHARE_TYPE_USER, $node, -1, 0);
+		$groupShares = $this->shareManager->getSharedWith($this->currentUser, Share::SHARE_TYPE_GROUP, $node, -1, 0);
+		$circleShares = $this->shareManager->getSharedWith($this->currentUser, Share::SHARE_TYPE_CIRCLE, $node, -1, 0);
 
 		$shares = array_merge($userShares, $groupShares, $circleShares);
 
@@ -555,14 +563,14 @@ class ShareAPIController extends OCSController {
 		/** @var \OCP\Share\IShare[] $shares */
 		$shares = [];
 		foreach ($nodes as $node) {
-			$shares = array_merge($shares, $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_USER, $node, false, -1, 0));
-			$shares = array_merge($shares, $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_GROUP, $node, false, -1, 0));
-			$shares = array_merge($shares, $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_LINK, $node, false, -1, 0));
-			if($this->shareManager->shareProviderExists(\OCP\Share::SHARE_TYPE_EMAIL)) {
-				$shares = array_merge($shares, $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_EMAIL, $node, false, -1, 0));
+			$shares = array_merge($shares, $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_USER, $node, false, -1, 0));
+			$shares = array_merge($shares, $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_GROUP, $node, false, -1, 0));
+			$shares = array_merge($shares, $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_LINK, $node, false, -1, 0));
+			if($this->shareManager->shareProviderExists(Share::SHARE_TYPE_EMAIL)) {
+				$shares = array_merge($shares, $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_EMAIL, $node, false, -1, 0));
 			}
 			if ($this->shareManager->outgoingServer2ServerSharesAllowed()) {
-				$shares = array_merge($shares, $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_REMOTE, $node, false, -1, 0));
+				$shares = array_merge($shares, $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_REMOTE, $node, false, -1, 0));
 			}
 		}
 
@@ -636,16 +644,16 @@ class ShareAPIController extends OCSController {
 		}
 
 		// Get all shares
-		$userShares = $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_USER, $path, $reshares, -1, 0);
-		$groupShares = $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_GROUP, $path, $reshares, -1, 0);
-		$linkShares = $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_LINK, $path, $reshares, -1, 0);
-		if ($this->shareManager->shareProviderExists(\OCP\Share::SHARE_TYPE_EMAIL)) {
-			$mailShares = $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_EMAIL, $path, $reshares, -1, 0);
+		$userShares = $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_USER, $path, $reshares, -1, 0);
+		$groupShares = $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_GROUP, $path, $reshares, -1, 0);
+		$linkShares = $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_LINK, $path, $reshares, -1, 0);
+		if ($this->shareManager->shareProviderExists(Share::SHARE_TYPE_EMAIL)) {
+			$mailShares = $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_EMAIL, $path, $reshares, -1, 0);
 		} else {
 			$mailShares = [];
 		}
-		if ($this->shareManager->shareProviderExists(\OCP\Share::SHARE_TYPE_CIRCLE)) {
-			$circleShares = $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_CIRCLE, $path, $reshares, -1, 0);
+		if ($this->shareManager->shareProviderExists(Share::SHARE_TYPE_CIRCLE)) {
+			$circleShares = $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_CIRCLE, $path, $reshares, -1, 0);
 		} else {
 			$circleShares = [];
 		}
@@ -653,7 +661,12 @@ class ShareAPIController extends OCSController {
 		$shares = array_merge($userShares, $groupShares, $linkShares, $mailShares, $circleShares);
 
 		if ($this->shareManager->outgoingServer2ServerSharesAllowed()) {
-			$federatedShares = $this->shareManager->getSharesBy($this->currentUser, \OCP\Share::SHARE_TYPE_REMOTE, $path, $reshares, -1, 0);
+			$federatedShares = $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_REMOTE, $path, $reshares, -1, 0);
+			$shares = array_merge($shares, $federatedShares);
+		}
+
+		if ($this->shareManager->outgoingServer2ServerGroupSharesAllowed()) {
+			$federatedShares = $this->shareManager->getSharesBy($this->currentUser, Share::SHARE_TYPE_REMOTE_GROUP, $path, $reshares, -1, 0);
 			$shares = array_merge($shares, $federatedShares);
 		}
 
@@ -712,7 +725,7 @@ class ShareAPIController extends OCSController {
 		/*
 		 * expirationdate, password and publicUpload only make sense for link shares
 		 */
-		if ($share->getShareType() === \OCP\Share::SHARE_TYPE_LINK) {
+		if ($share->getShareType() === Share::SHARE_TYPE_LINK) {
 
 			$newPermissions = null;
 			if ($publicUpload === 'true') {
@@ -784,7 +797,7 @@ class ShareAPIController extends OCSController {
 				$share->setPermissions($permissions);
 			}
 
-			if ($share->getShareType() === \OCP\Share::SHARE_TYPE_EMAIL) {
+			if ($share->getShareType() === Share::SHARE_TYPE_EMAIL) {
 				if ($password === '') {
 					$share->setPassword(null);
 				} else if ($password !== null) {
@@ -807,8 +820,8 @@ class ShareAPIController extends OCSController {
 
 		if ($permissions !== null && $share->getShareOwner() !== $this->currentUser) {
 			/* Check if this is an incomming share */
-			$incomingShares = $this->shareManager->getSharedWith($this->currentUser, \OCP\Share::SHARE_TYPE_USER, $share->getNode(), -1, 0);
-			$incomingShares = array_merge($incomingShares, $this->shareManager->getSharedWith($this->currentUser, \OCP\Share::SHARE_TYPE_GROUP, $share->getNode(), -1, 0));
+			$incomingShares = $this->shareManager->getSharedWith($this->currentUser, Share::SHARE_TYPE_USER, $share->getNode(), -1, 0);
+			$incomingShares = array_merge($incomingShares, $this->shareManager->getSharedWith($this->currentUser, Share::SHARE_TYPE_GROUP, $share->getNode(), -1, 0));
 
 			/** @var \OCP\Share\IShare[] $incomingShares */
 			if (!empty($incomingShares)) {
@@ -847,13 +860,13 @@ class ShareAPIController extends OCSController {
 		}
 
 		// If the share is shared with you (or a group you are a member of)
-		if ($share->getShareType() === \OCP\Share::SHARE_TYPE_USER &&
+		if ($share->getShareType() === Share::SHARE_TYPE_USER &&
 			$share->getSharedWith() === $this->currentUser
 		) {
 			return true;
 		}
 
-		if ($checkGroups && $share->getShareType() === \OCP\Share::SHARE_TYPE_GROUP) {
+		if ($checkGroups && $share->getShareType() === Share::SHARE_TYPE_GROUP) {
 			$sharedWith = $this->groupManager->get($share->getSharedWith());
 			$user = $this->userManager->get($this->currentUser);
 			if ($user !== null && $sharedWith !== null && $sharedWith->inGroup($user)) {
@@ -861,7 +874,7 @@ class ShareAPIController extends OCSController {
 			}
 		}
 
-		if ($share->getShareType() === \OCP\Share::SHARE_TYPE_CIRCLE) {
+		if ($share->getShareType() === Share::SHARE_TYPE_CIRCLE) {
 			// TODO: have a sanity check like above?
 			return true;
 		}
@@ -916,7 +929,7 @@ class ShareAPIController extends OCSController {
 
 
 		try {
-			if ($this->shareManager->shareProviderExists(\OCP\Share::SHARE_TYPE_CIRCLE)) {
+			if ($this->shareManager->shareProviderExists(Share::SHARE_TYPE_CIRCLE)) {
 				$share = $this->shareManager->getShareById('ocCircleShare:' . $id, $this->currentUser);
 				return $share;
 			}
@@ -925,7 +938,7 @@ class ShareAPIController extends OCSController {
 		}
 
 		try {
-			if ($this->shareManager->shareProviderExists(\OCP\Share::SHARE_TYPE_EMAIL)) {
+			if ($this->shareManager->shareProviderExists(Share::SHARE_TYPE_EMAIL)) {
 				$share = $this->shareManager->getShareById('ocMailShare:' . $id, $this->currentUser);
 				return $share;
 			}
