@@ -148,6 +148,28 @@ class SimpleFile implements ISimpleFile  {
 	}
 
 	/**
+	 * Open the file as stream for reading, resulting resource can be operated as stream like the result from php's own fopen
+	 *
+	 * @return resource
+	 * @throws \OCP\Files\NotPermittedException
+	 * @since 14.0.0
+	 */
+	public function read() {
+		return $this->file->fopen('r');
+	}
+
+	/**
+	 * Open the file as stream for writing, resulting resource can be operated as stream like the result from php's own fopen
+	 *
+	 * @return resource
+	 * @throws \OCP\Files\NotPermittedException
+	 * @since 14.0.0
+	 */
+	public function write() {
+		return $this->file->fopen('w');
+	}
+
+	/**
 	 * Open the file as stream, resulting resource can be operated as stream like the result from php's own fopen
 	 *
 	 * @return resource
@@ -155,6 +177,5 @@ class SimpleFile implements ISimpleFile  {
 	 * @since 14.0.0
 	 */
 	public function fopen(string $mode) {
-		return $this->file->fopen($mode);
 	}
 }
